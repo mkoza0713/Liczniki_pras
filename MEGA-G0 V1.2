@@ -1,0 +1,789 @@
+/*
+  This is an example on how to use the 1.8" TFT 128x160 SPI ST7735 display using the Adafruit library.
+  GND->GND
+  Vcc->+5V
+  DIN->D11
+  CLK->D13
+  CS->D10
+  DC->D7
+  RST->D8
+  BL->D9
+
+  Arduino Mega
+  SCK  52
+  SDCA  51
+  CS  53
+  DC  47
+  RST  48
+  BL  49
+
+  Hardware SPI Pins:
+   Arduino Uno   SCK=13, SDA=11
+   Arduino Nano  SCK=13, SDA=11
+   Arduino Due   SCK=76, SDA=75
+   Arduino Mega  SCK=52, SDA=51
+
+  SPI pin names can be confusing. These are the alternative names for the SPI pins:
+  MOSI = DIN = R/W = SDO = DI = SI = MTSR = SDA = D1 = SDI
+  CS = CE = RS = SS
+  DC = A0 = DO = DOUT = SO = MRST
+  RESET = RST
+  SCLK = CLK = E = SCK = SCL = D0
+
+  Libraries needed:
+  https://github.com/adafruit/Adafruit-ST7735-Library
+  https://github.com/adafruit/Adafruit-GFX-Library
+
+
+  Reference page for GFX Library: https://cdn-learn.adafruit.com/downloads/pdf/adafruit-gfx-graphics-library.pdf
+
+
+  Color is expressed in 16 bit with Hexadecimal value.
+  To select a particular color, go here and copy the "Hexadecimal 16 bit color depth value":
+  https://ee-programming-notepad.blogspot.com/2016/10/16-bit-color-generator-picker.html
+  Common colors:
+   BLACK  0x0000
+   BLUE   0x001F
+   RED    0xF800
+   GREEN  0x07E0
+   CYAN   0x07FF
+   MAGENTA  0xF81F
+   YELLOW   0xFFE0
+   WHITE  0xFFFF
+
+  List of custom fonts: https://learn.adafruit.com/adafruit-gfx-graphics-library/using-fonts
+
+
+  LM335 tutorial https://randomnerdtutorials.com/arduino-lm35-lm335-lm34-temperature-sensor/
+  SERWO: czerwony +5V, czarny GNG, pomarańcz sygnał, pin9
+  LM335 llewa noga wolny, prawa GND, środek 2kOhm do +5V oraz do analogRead
+  /*Program służący do zabezpieczenia maszyny zaciskającej,
+  przed przedwczesnym zdjęciem nogi z pedała
+
+
+  Licznik do G0
+  V1.1 - wprowadzono modyfikacja programu dla PP8 rev10
+  - wprowadzono nr wersji na ekranie glownym
+  - wprowadzono zmienna z numerem wersji (patrz poniżej)
+  - wszystkie zmiany w kodzie oznaczone tagiem "********************V1.1*"
+  - jeden czas dla wszystkich koncowek
+
+  V1.2 - wprowadzono modyfikacje tylko dla G0
+  - wydluzono czas dzialania z 2000 do 3000 dla G0 (jeden czas);
+  - dodano zminna blokadaD do wylaczenia imgotania ekranu podczas zacisku
+  - wszystkie zmiany oznaczone tagiem /*********************V1.2********************/
+
+*/
+
+String nrWersji = "G0_V1.2";
+
+/***Obsługa pedała***/
+#define pedal 13
+#define przekaznik 12
+
+unsigned long currentTime = 0;
+unsigned long previousTime = 0;
+int diffferenceTime = 0;
+int drganieStykow = 0;  //75
+byte pedalSafe = 150; //zabezpieczneie przed przypadkowym zwarciem do masy, KONIECZNE
+//********************************************************************************************************//
+int nastawaCzasu = 2000;  /*czas w ms*/
+int nastawaCzasuTab[] {
+  //********************V1.1*****zmiana nastaw dla PP19**************//
+  3000, //kRurowa  /*Tylko dla G0*/ /*********************V1.2********************/
+  900,  //ktulejkowa
+  1200, //kOczkowa
+  1200, //kOczkowaIzolowana
+  1000, //brak
+};
+
+//********************************************************************************************************//
+byte blokadaA = 0;/*blokada zadzialania blokady wcisniecia pedulu + diody*/
+byte blokadaB = 0; /*blokada ponownego wcisniecia*/
+byte blokadaC = 0; /*blokada zapętlania po OK*/
+
+/***Obsługa klawiatury***/
+#include <Keypad.h> //biblioteka od klawiatury
+const byte ROWS = 4; // ile wierszy
+const byte COLS = 3; //ile kolumn
+byte rowPins[ROWS] = {25, 26, 27, 28}; //piny wierszy
+byte colPins[COLS] = {22, 23, 24}; //piny kolum
+char keys[ROWS][COLS] = { //mapowanie klawiatury
+  {'1', '2', '3'},
+  {'4', '5', '6'},
+  {'7', '8', '9'},
+  {'*', '0', '#'}
+};
+Keypad klawiatura = Keypad( makeKeymap(keys), rowPins, colPins, ROWS, COLS ); //inicjalizacja klawiatury
+
+/****Obsługa lcd****/
+#include <Adafruit_GFX.h>  // Include core graphics library
+#include <Adafruit_ST7789.h>
+
+// Create display:
+Adafruit_ST7789 tft = Adafruit_ST7789(53, 47, 48);  //(TFT_CS, TFT_DC, TFT_RST)
+//Custom fonts
+#include<Fonts/FreeSansBold24pt7b.h>
+#include<Fonts/FreeSansBold18pt7b.h>
+#include<Fonts/FreeSansBold12pt7b.h>
+#include<Fonts/FreeSansBold9pt7b.h>
+
+/***Obsługa przejścia***/
+byte keyNumber;
+int singleNumber = 0, decimalNumber = 0, hundredNumber = 0, thousandNumber = 0;
+byte stepNumber = 0;  //zmienna wprowadzania wartosci
+byte positionTft = 0;  //zmienna wprowadzania wartosci
+
+/***Zmienne globalne***/
+byte stepCounter = 1;  //kroki programu
+byte stepCounter_1 = 1;
+byte stepCounter_2 = 1;
+int globalCounter = 0; //licznik zaciskow
+int finalNumber = 0;  //licznik zaciskow wpisanych
+int badCounter = 0;
+char klawisz;       //zapamietanie znaku z klawiatury
+byte resetCharCounter = 0; //zmienna wicskania gwiazdki 3x
+byte optionCharCounter = 0; //zmienna wicskania gwiazdki 5x
+
+
+/***obsługa pamiecia EEPROM***/
+#include <EEPROM.h>  //zapisywanie statystyk do EEPROM
+
+unsigned long czasStart = 0;
+unsigned long czasStop = 0;
+unsigned long crimpTime = 0;
+
+
+/*******************************************************************************************************/
+/*******************************************************************************************************/
+
+void setup() {
+  /***Obsługa pedała***/
+  pinMode(pedal, INPUT_PULLUP);
+  pinMode(przekaznik, OUTPUT);
+
+  /****Port szeregowy****/
+  Serial.begin(9600);
+
+  /****LCD****/
+  //tft.initR(INITR_BLACKTAB);  // Initialize a ST7735S chip, black tab  1.8"
+  tft.init(240, 320);  //2.0"
+  tft.fillScreen(ST77XX_WHITE);  // Fill screen with black
+  tft.setRotation(1);  // Set orientation of the display. Values are from 0 to 3. If not declared, orientation would be 0,
+  tft.setTextWrap(false);
+  tft.fillScreen(ST77XX_WHITE);  // Fill screen with white
+
+  EEPROM.write(1, 49); //automatycznie po uruchomieniu tryb czasowy
+
+}
+/*******************************************************************************************************/
+/*******************************************************************************************************/
+
+void loop() {
+  klawisz = klawiatura.getKey();            //pobieram znak zklawiatury
+  if (klawisz)keyNumber = keySign(klawisz);                 //konwertuje na liczbę
+  /*********************************************************************/
+  menuSteps();
+  static byte tryb1 = 0;
+  if (digitalRead(pedal) == LOW && tryb1 == 0) {
+  czasStart = millis();
+  tryb1 = 1;
+  } else if (tryb1 == 1) {
+  czasStop = millis();
+  tryb1 = 0;
+  crimpTime = czasStop - czasStart;
+  czasStart = 0; czasStop = 0;
+  }
+}
+void menuSteps() {
+  switch (stepCounter) {
+  case 1:
+    commentsLoopProgram(1);   //wprowadz ilość...
+    tft.setFont(&FreeSansBold12pt7b);
+    if (EEPROM.read(1) == 49)tft.println("Tryb czasowy");
+    if (EEPROM.read(1) == 50)tft.println("Tryb prototypowy");
+    stepCounter = 2;
+    break;
+  case 2:
+    if (klawisz == '*') {  //wejscie w opcje
+      if (optionCharCounter >= 4) {
+        optionCharCounter = 0; //zerowane step one
+        stepNumber = 0;  //zmienna wprowadzania wartosci  poprawa bledow
+        stepCounter = 4;
+        positionTft = 0;  //zmienna wprowadzania wartosci
+        break;
+      }
+      optionCharCounter++;
+    }
+    if (klawisz == '#' && finalNumber >= 1) { //zapisanie ilosci
+      commentsLoopProgram(2);   //ZAPISANO!...ilosc
+      delay(500);
+      stepCounter = 6;
+      /*Tylko dla G0*/
+        stepCounter = 3;
+        nastawaCzasu = nastawaCzasuTab[0];
+        break;
+      /*Tylko dla G0*/
+      tft.fillScreen(ST77XX_WHITE);  // Fill screen with white
+      commentsLoopProgram(3);
+      break;  //wyjscie ze switch-a
+    }
+    if (klawisz && klawisz != '#' && klawisz != '*') {
+      wpisanieIlosci(klawisz);
+      tft.setCursor(10, 145); // Set position (x,y)
+      commentsLoopProgram(6);
+    }
+    break;
+  case 3: //wejscie w tryb zacisku***********************************************************************************
+    if (EEPROM.read(1) == 49) { //czasowy
+      if (nastawaCzasu == 0)stepTwo(2);
+      else stepTwo(1);
+    }
+    if (EEPROM.read(1) == 50)stepTwo(2);//prosty
+
+
+    if (klawisz == '*') {
+      resetFunct();
+    } else if (klawisz == '0') {
+      globalCounter--;
+      if (globalCounter < 0)globalCounter = 0;
+      tft.fillRect(5, 35, 115, 45, ST77XX_WHITE);
+      tft.setFont(&FreeSansBold24pt7b);
+      tft.setTextColor(ST77XX_BLACK);
+      tft.setCursor(10, 75); // Set position (x,y)
+      tft.println(globalCounter);
+    } else if (klawisz == '1') {
+      badCounter++;
+      globalCounter--;
+      if (globalCounter < 0) {
+        globalCounter = 0;
+        badCounter--;
+      }
+      tft.setFont(&FreeSansBold24pt7b);
+      tft.fillRect(120, 85, 100, 45, ST77XX_WHITE);
+      tft.fillRect(5, 35, 115, 45, ST77XX_WHITE);
+      tft.setTextColor(0xFC62);
+      tft.setCursor(120, 120); // Set position (x,y)
+      tft.println(badCounter);
+      tft.setTextColor(ST77XX_BLACK);
+      tft.setCursor(10, 75); // Set position (x,y)
+      tft.println(globalCounter);
+    }
+    break;
+  case 4:
+    optionsMenu();
+    break;
+  case 6:
+    
+    if (klawisz && keyNumber >= 1 && keyNumber <= 4 && klawisz != '*' && klawisz != '#') {
+      commentsLoopProgram(4);  //wpisanie wybranej pozycji
+      stepCounter = 7;
+      switch (keyNumber) {
+        case 1:
+          nastawaCzasu = nastawaCzasuTab[0];
+          break;
+        case 2:
+          nastawaCzasu = nastawaCzasuTab[1];
+          break;
+        case 3:
+          nastawaCzasu = nastawaCzasuTab[2];
+          break;
+        case 4:
+          nastawaCzasu = nastawaCzasuTab[3];
+          break;
+        case 5:
+          nastawaCzasu = nastawaCzasuTab[4];
+          break;
+      }
+    }
+    break;
+  case 7:
+    tft.setCursor(5, 235); // Set position (x,y)
+    commentsLoopProgram(6);
+    if (klawisz == '#') {
+      commentsLoopProgram(5);  //ZAPISANO!...koncówka
+      delay(1000);
+      stepCounter = 3;
+      tft.fillScreen(ST77XX_WHITE);  // Fill screen with white
+      break;
+    }
+    break;
+  }
+}
+void commentsLoopProgram(byte type) {
+  switch (type) {
+  case 1:
+    tft.setFont(&FreeSansBold18pt7b);  // Set a custom font
+    tft.setTextColor(ST77XX_BLACK, ST77XX_BLACK);
+    tft.setCursor(10, 30); // Set position (x,y)
+    tft.println("Wprowadz ilosc");
+    tft.setCursor(115, 90); // Set position (x,y)
+    tft.println("szt.");
+    tft.drawLine(0, 190, 320, 190, ST77XX_BLACK);
+   
+    tft.setFont(&FreeSansBold9pt7b);  // Set a custom font
+    tft.setCursor(230, 220); // Set position (x,y)
+    tft.println(nrWersji);
+   
+    tft.setFont(&FreeSansBold18pt7b);  // Set a custom font
+    tft.setTextColor(ST77XX_BLACK, ST77XX_BLACK);
+    tft.setCursor(10, 220); // Set position (x,y)
+    tft.setTextColor(ST77XX_BLACK, ST77XX_BLACK);
+
+    break;
+  case 2:
+    tft.setTextColor(ST77XX_RED);
+    tft.setFont(&FreeSansBold18pt7b);  // Set a custom font
+    tft.setCursor(10, 175); // Set position (x,y)
+    tft.println("Zapisano!");
+    break;
+  case 3:
+    //ramka
+    tft.drawRect(0, 0, 320, 40, ST77XX_BLACK);
+    tft.drawLine(280, 260, 280, 40, ST77XX_BLACK);
+    tft.setTextColor(ST77XX_BLACK);
+    tft.setFont(&FreeSansBold18pt7b);  // Set a custom font
+    tft.setCursor(2, 30); // Set position (x,y)
+    tft.println("Wybierz zacisk: ");
+
+    tft.setCursor(280, 30); // Set position (x,y)
+    tft.println("[  ]");
+
+    //********************V1.1*************zmiana nazw nastaw*************//
+    tft.setFont(&FreeSansBold12pt7b);  // Set a custom font
+    tft.setCursor(2, 70); // Set position (x,y)
+    tft.println("Rurowa");
+    tft.setCursor(285, 70); // Set position (x,y)
+    tft.println("[1]");
+    tft.setCursor(2, 100); // Set position (x,y)
+    tft.println("Tulejkowa");
+    tft.setCursor(285, 100); // Set position (x,y)
+    tft.println("[2]");
+    tft.setCursor(2, 130); // Set position (x,y)
+    tft.println("Oczkowa");
+    tft.setCursor(285, 130); // Set position (x,y)
+    tft.println("[3]");
+    tft.setCursor(2, 160); // Set position (x,y)
+    tft.println("Oczkowa izolowana");
+    tft.setCursor(285, 160); // Set position (x,y)
+    tft.println("[4]");
+
+    break;
+  case 4:
+    tft.setTextColor(ST77XX_RED, ST77XX_RED);
+    tft.setFont(&FreeSansBold18pt7b);  // Set a custom font
+    tft.setCursor(292, 30); // Set position (x,y)
+    tft.println(klawisz);
+    break;
+  case 5:
+    tft.setTextColor(ST77XX_RED);
+    tft.setFont(&FreeSansBold12pt7b);  // Set a custom font
+    tft.setCursor(160, 235); // Set position (x,y)
+    tft.println("Zapisano!");
+    break;
+  case 6:
+    tft.setFont(&FreeSansBold12pt7b);  // Set a custom font
+    tft.setTextColor(ST77XX_RED, ST77XX_BLACK);
+    tft.println("Zatwierdz: #");
+    break;
+  }
+}
+void optionsMenu() {
+  switch (stepCounter_1) {
+  case 1:
+    tft.fillScreen(ST77XX_WHITE);  // Fill screen with white
+    tft.drawRect(0, 0, 320, 40, ST77XX_BLACK);
+    tft.drawLine(245, 145, 245, 40, ST77XX_BLACK);
+    tft.drawLine(0, 145, 320, 145, ST77XX_BLACK);
+    tft.setFont(&FreeSansBold18pt7b);  // Set a custom font
+    tft.setTextColor(ST77XX_BLACK, ST77XX_BLACK);
+    tft.setCursor(2, 30); // Set position (x,y)
+    tft.println("Opcje: ");
+    tft.setCursor(250, 30); // Set position (x,y)
+    tft.println("[  ]");
+    tft.setFont(&FreeSansBold12pt7b);  // Set a custom font
+    tft.setCursor(2, 70); // Set position (x,y)
+    tft.println("Tryb czasowy");
+    tft.setCursor(250, 70); // Set position (x,y)
+    tft.println("[1]");
+    tft.setCursor(2, 100); // Set position (x,y)
+    tft.println("Tryb prototypowy");
+    tft.setCursor(250, 100); // Set position (x,y)
+    tft.println("[2]");
+    tft.setTextColor(ST77XX_RED, ST77XX_BLACK);
+    tft.setCursor(2, 130); // Set position (x,y)
+    tft.println("Zapisz [#]");
+
+    //dane o czasach;
+    //********************V1.1*************zmiana nazw nastaw*************//
+    tft.setFont(&FreeSansBold9pt7b);  // Set a custom font
+    tft.setTextColor(ST77XX_BLACK, ST77XX_BLACK);
+    tft.setCursor(2, 170); // Set position (x,y)
+    tft.println("RUROWA: ");
+    tft.setCursor(2, 190); // Set position (x,y)
+    tft.println("TULEJKOWA: ");
+    tft.setCursor(2, 210); // Set position (x,y)
+    tft.println("OCZKOWA: ");
+    tft.setCursor(2, 230); // Set position (x,y)
+    tft.println("OCZKOWA IZOL.: ");
+
+    tft.setCursor(200, 170); // Set position (x,y)
+    tft.println(nastawaCzasuTab[0]);
+    tft.setCursor(200, 190); // Set position (x,y)
+    tft.println(nastawaCzasuTab[1]);
+    tft.setCursor(200, 210); // Set position (x,y)
+    tft.println(nastawaCzasuTab[2]);
+    tft.setCursor(200, 230); // Set position (x,y)
+    tft.println(nastawaCzasuTab[3]);
+
+
+    stepCounter_1 = 2;//przejście dalej..
+    break;
+  case 2:
+    if (klawisz && keyNumber >= 1 && keyNumber <= 2 && klawisz != '*') {
+      if (klawisz == '#') {
+        tft.setFont(&FreeSansBold12pt7b);  // Set a custom font
+        tft.setTextColor(ST77XX_RED, ST77XX_RED);
+        tft.setCursor(120, 30); // Set position (x,y)
+        //tft.setCursor(20, 200); // Set position (x,y)
+        tft.println("Zapisano!");
+        stepCounter = 1;
+        delay(2000);
+        tft.fillScreen(ST77XX_WHITE);  // Fill screen with white
+        stepCounter_1 = 1;
+        break;
+      }
+      tft.setFont(&FreeSansBold18pt7b);  // Set a custom font
+      tft.setTextColor(ST77XX_RED, ST77XX_RED);
+      tft.setCursor(260, 30); // Set position (x,y)
+      tft.println(klawisz);
+      if (klawisz > 0) {
+        EEPROM.write(1, klawisz);
+        //Serial.println(EEPROM.read(1));
+      }
+    }
+    break;
+  }
+}
+void resetFunct() {
+  tft.setFont(&FreeSansBold24pt7b);
+  tft.setTextColor(ST77XX_RED);
+  tft.setCursor(150, 30); // Set position (x,y)
+  tft.println("*");
+  if (resetCharCounter == 2) { //zmienna zerowawana poniżej oraz w funckjci time program i simple program
+  resetCharCounter = 0;
+  klawisz = 0;  //resetuję zawartość zmiennej klawisza
+  blokadaA = 0;
+  blokadaB = 0;
+  //zmienne liczników ilosci
+  globalCounter = 0;
+  badCounter = 0;
+  finalNumber = 0;
+  //pozycje w programie
+  stepCounter = 1;
+  stepCounter_2 = 1;
+  //licznik na step one
+  singleNumber = 0; decimalNumber = 0; hundredNumber = 0; thousandNumber = 0;
+  stepNumber = 0; positionTft = 0; \
+  //zmienne stopera
+  tft.fillScreen(ST77XX_WHITE);  // Fill screen with white
+  }
+  resetCharCounter++;
+  //  Serial.println("resetCharCounter: ");
+  //  Serial.println(resetCharCounter);
+  delay(200);
+}
+void pedalTimeProgram() {
+  currentTime = millis();
+  while (digitalRead(pedal) == LOW) { //modyfikacjaa celem unikniecia przypadkowych zwarc
+  delay(pedalSafe);
+  byte blokadaD = 1;   //blokada do odswiezania ekranu z zaciskiem. Aby nie migal, tylko swiecil ciagle/*********************V1.2********************/
+  while (digitalRead(pedal) == LOW && blokadaB == 0 && blokadaC == 0) {/*********************/
+    previousTime = currentTime;  //zapisuje bierzacy czas do zmiennej prev..
+    digitalWrite(przekaznik, HIGH);
+    if(blokadaD){
+      commentsMainProgram(3);/*********************V1.2********************/
+      blokadaD=0;
+    }
+    resetCharCounter = 0;
+
+    if ( millis() - previousTime >= nastawaCzasu) {  //sprawdzam czy uplynela okreslona ilosc czasu
+      digitalWrite(przekaznik, LOW);
+      commentsMainProgram(1);
+      stepCounter_2 = 1;
+      globalCounter++;
+      blokadaC = 1; //aby wyść z pętli while
+      if (globalCounter == finalNumber) {
+        digitalWrite(przekaznik, LOW);
+        commentsMainProgram(4);
+      }
+    }
+    blokadaA = 1;
+  }
+  }/*********************/
+
+
+
+  if (digitalRead(pedal) == HIGH) {
+  blokadaC = 0; //zerowanie po wyscjiu z petli while
+  }
+
+  /*Przypadek, gdzie za wcześnie puszczono pedał*/
+  if (digitalRead(pedal) == HIGH && millis() - previousTime < nastawaCzasu && blokadaA == 1) {
+  digitalWrite(przekaznik, LOW);
+  commentsMainProgram(2);
+  blokadaB = 1;  //blokowanie ponownego testu
+  }
+
+  /*Odblokowanie układu przyciskiem "RESET"*/
+  if (klawisz == '#') {
+  //digitalWrite(rednLed, LOW);
+  stepCounter_2 = 1;
+  blokadaA = 0;
+  blokadaB = 0;  //odblokowanie ponownego testu
+  }
+
+  /*Zerownie zmiennych, blokad*/
+  previousTime = 0;
+  digitalWrite(przekaznik, LOW);
+  delay(drganieStykow);
+}
+void pedalSimpleProgram() {
+  byte a = 0;
+
+  while (digitalRead(pedal) == LOW) {
+  delay(pedalSafe);
+  while (digitalRead(pedal) == LOW && blokadaC == 0) {
+    digitalWrite(przekaznik, HIGH);
+    if (a == 0) {
+      commentsMainProgram(3);
+      globalCounter++;
+      a = 1;
+      stepCounter_2 = 1;
+    }
+    resetCharCounter = 0;
+  }
+  }
+
+
+  /*************************************************************/
+  if (globalCounter == finalNumber) {//koniec partii
+  digitalWrite(przekaznik, LOW);
+  commentsMainProgram(4);
+  }
+  /*************************************************************/
+  if (digitalRead(pedal) == HIGH && blokadaC == 1) {
+  blokadaC = 0; //zerowanie po wyscjiu z petli while
+  tft.fillScreen(ST77XX_WHITE);  // Fill screen with white
+  }
+  /*************************************************************/
+  digitalWrite(przekaznik, LOW);
+  delay(drganieStykow);
+}
+
+void commentsMainProgram(byte type) {
+  switch (type) {
+  case 1:
+    tft.fillScreen(ST77XX_GREEN);  // Fill screen with white
+    tft.setFont(&FreeSansBold24pt7b);
+    tft.setTextColor(ST77XX_BLACK);
+    tft.setCursor(120, 120); // Set position (x,y)
+    tft.println("OK");
+    delay(1000);
+    tft.fillScreen(ST77XX_WHITE);  // Fill screen with white
+    break;
+  case 2:
+    tft.fillScreen(ST77XX_RED);  // Fill screen with white
+    tft.setFont(&FreeSansBold24pt7b);
+    tft.setTextColor(ST77XX_BLACK);
+    tft.setCursor(80, 120); // Set position (x,y)
+    tft.println("BLAD!");
+    tft.setFont(&FreeSansBold12pt7b);
+    tft.setCursor(5, 200); // Set position (x,y)
+    tft.println("Aby odblokowac,");
+    tft.setCursor(20, 230); // Set position (x,y)
+    tft.println("wcisnij [#]");
+    break;
+  case 3:
+    tft.fillScreen(0x639D);  // Fill screen with white
+    tft.setFont(&FreeSansBold24pt7b);
+    tft.setTextColor(ST77XX_BLACK);
+    tft.setCursor(80, 120); // Set position (x,y)
+    tft.println("Zacisk");
+    break;
+  case 4:
+    //tft.fillScreen(ST77XX_WHITE);  // Fill screen with white
+    tft.fillScreen(ST77XX_GREEN);  // Fill screen with white
+    tft.fillRoundRect(3, 50, 317, 80, 15, ST77XX_WHITE);
+    tft.setTextColor(ST77XX_BLACK);
+    tft.setFont(&FreeSansBold18pt7b);  // Set a custom font
+    tft.setCursor(10, 30); // Set position (x,y)
+    tft.println("KONIEC partii");
+    tft.setFont(&FreeSansBold12pt7b);  // Set a custom font
+    tft.setCursor(10, 80); // Set position (x,y)
+    tft.println("Wykonano: ");
+    tft.setCursor(10, 120); // Set position (x,y)
+    tft.setTextColor(0xFC62);
+    tft.println("Straty: ");
+
+    tft.setTextColor(ST77XX_BLACK);
+    tft.setFont(&FreeSansBold18pt7b);  // Set a custom font
+    tft.setCursor(145, 80); // Set position (x,y)
+    tft.println(globalCounter);
+    tft.setCursor(225, 80); // Set position (x,y)
+    tft.println("/");
+    tft.setCursor(235, 80); // Set position (x,y)
+    tft.println(finalNumber);
+
+    tft.setTextColor(0xFC62);
+    tft.setCursor(140, 120); // Set position (x,y)
+    tft.println(badCounter);
+
+
+    tft.setTextColor(ST77XX_BLACK);
+    tft.setFont(&FreeSansBold12pt7b);  // Set a custom font
+    tft.setCursor(2, 190); // Set position (x,y)
+    tft.println("Wcisnij 3x: ");
+    tft.setCursor(4, 220); // Set position (x,y)
+    tft.println(" aby kontynuowac");
+    tft.setFont(&FreeSansBold24pt7b);  // Set a custom font
+    tft.setCursor(130, 205); // Set position (x,y)
+    tft.println("*");
+
+    break;
+  case 5:
+    if (EEPROM.read(1) == 49)tft.fillScreen(ST77XX_WHITE);
+    if (EEPROM.read(1) == 50) {
+      tft.fillScreen(0xED14);
+      tft.setFont(&FreeSansBold12pt7b);  // Set a custom font
+      tft.setCursor(10, 170); // Set position (x,y)
+      tft.println("Czas zacisku:");
+      tft.setCursor(180, 170); // Set position (x,y)
+      tft.println(crimpTime);
+    }
+    //tft.fillScreen(ST77XX_WHITE);
+    tft.setFont(&FreeSansBold12pt7b);  // Set a custom font
+
+    tft.setTextColor(ST77XX_BLACK);
+    tft.setCursor(10, 30); // Set position (x,y)
+    tft.println("WYKONANO:");
+
+    tft.setTextColor(0xFC62);
+    tft.setCursor(10, 120); // Set position (x,y)
+    tft.println("STRATY:");
+
+    tft.setFont(&FreeSansBold24pt7b);
+    tft.setTextColor(ST77XX_BLACK);
+    tft.setCursor(10, 75); // Set position (x,y)
+    tft.println(globalCounter);
+    tft.setCursor(120, 75); // Set position (x,y)
+    tft.println("/");
+    tft.setCursor(130, 75); // Set position (x,y)
+    tft.println(finalNumber);
+
+    tft.setTextColor(0xFC62);
+    tft.setCursor(120, 120); // Set position (x,y)
+    tft.println(badCounter);
+
+    tft.drawLine(0, 130, 320, 130, ST77XX_BLACK);
+    tft.drawLine(0, 131, 320, 131, ST77XX_BLACK);
+
+    tft.setFont(&FreeSansBold12pt7b);  // Set a custom font
+    tft.setTextColor(ST77XX_BLUE);
+    tft.setCursor(10, 205); // Set position (x,y)
+    tft.println("Zacisk na pusto, wcisnij:");
+    tft.setCursor(10, 235); // Set position (x,y)
+    tft.println("Zacisk zepsuty, wcisnij:");
+    tft.setTextColor(ST77XX_RED);
+    tft.setCursor(300, 205); // Set position (x,y)
+    tft.println("0");
+    tft.setCursor(300, 235); // Set position (x,y)
+    tft.println("1");
+    tft.setTextColor(ST77XX_BLACK);
+
+    break;
+  }
+}
+void stepTwo(byte a) {
+  if (globalCounter < finalNumber) {
+  /****Obsluga LCD****/
+  switch (stepCounter_2) {
+    case 1: //właczenie ramki zacisku tylko raz
+      commentsMainProgram(5);
+      stepCounter_2 = 2;
+      break;
+    case 2:
+      switch (a) {
+        case 1:
+          pedalTimeProgram();
+          break;
+        case 2:
+          pedalSimpleProgram();
+          break;
+      }
+      break;
+  }
+  }
+}
+
+void wpisanieIlosci(char klawisz) {  //krok pierwszy
+
+  optionCharCounter = 0;
+  //obsługa zmiennych
+  if (stepNumber <= 3) {
+  switch (stepNumber) {
+    case 3:
+      thousandNumber = hundredNumber;
+      hundredNumber = decimalNumber;
+      decimalNumber = singleNumber;
+      singleNumber = keyNumber;
+      stepNumber = 4;
+      break;
+    case 2:
+      hundredNumber = decimalNumber;
+      decimalNumber = singleNumber;
+      singleNumber = keyNumber;
+      stepNumber = 3;
+      break;
+    case 1:
+      decimalNumber = singleNumber;
+      singleNumber = keyNumber;
+      stepNumber = 2;
+      break;
+    case 0:
+      singleNumber = keyNumber;
+      stepNumber = 1;
+      break;
+  }
+  positionTft += 25;
+  tft.setFont(&FreeSansBold24pt7b);  // Set a custom font
+  tft.setCursor(-15 + positionTft, 90); // Set position (x,y)
+  tft.setTextColor(ST77XX_BLACK);
+  tft.println(klawisz);
+  }
+  finalNumber = thousandNumber * 1000 + hundredNumber * 100 + decimalNumber * 10 + singleNumber;
+}
+byte keySign(char klawisz) {  //konwersja znaku na liczbę
+  switch (klawisz) {
+  case '1':
+    return 1;
+  case '2':
+    return 2;
+  case '3':
+    return 3;
+  case '4':
+    return 4;
+  case '5':
+    return 5;
+  case '6':
+    return 6;
+  case '7':
+    return 7;
+  case '8':
+    return 8;
+  case '9':
+    return 9;
+  case '0':
+    return 0;
+  }
+}
