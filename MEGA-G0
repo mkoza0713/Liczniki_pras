@@ -68,9 +68,13 @@
   - wszystkie zmiany w kodzie oznaczone tagiem "********************V1.1*"
   - jeden czas dla wszystkich koncowek
 
+  V1.2 - wprowadzono modyfikacje tylko dla G0
+  - wydluzono czas dzialania z 2000 do 3000 dla G0 (jeden czas);
+  - dodano zminna blokadaD do wylaczenia imgotania ekranu podczas zacisku
+  - wszystkie zmiany oznaczone tagiem *********************V1.2********************
 */
 
-String nrWersji = "G0_V1.1";
+String nrWersji = "G0_V1.2";
 
 /***Obsługa pedała***/
 #define pedal 13
@@ -82,10 +86,10 @@ int diffferenceTime = 0;
 int drganieStykow = 0;  //75
 byte pedalSafe = 150; //zabezpieczneie przed przypadkowym zwarciem do masy, KONIECZNE
 //********************************************************************************************************//
-int nastawaCzasu = 2000;  /*czas w ms*/
+int nastawaCzasu = 4000;  /*czas w ms*/
 int nastawaCzasuTab[] {
   //********************V1.1*****zmiana nastaw dla PP19**************//
-  2000, //kRurowa  /*Tylko dla G0*/
+  5000, //kRurowa  /*Tylko dla G0*/ /*********************V1.2********************/
   900,  //ktulejkowa
   1200, //kOczkowa
   1200, //kOczkowaIzolowana
@@ -492,10 +496,14 @@ void pedalTimeProgram() {
   currentTime = millis();
   while (digitalRead(pedal) == LOW) { //modyfikacjaa celem unikniecia przypadkowych zwarc
   delay(pedalSafe);
+  byte blokadaD = 1;   //blokada do odswiezania ekranu z zaciskiem. Aby nie migal, tylko swiecil ciagle/*********************V1.2********************/
   while (digitalRead(pedal) == LOW && blokadaB == 0 && blokadaC == 0) {/*********************/
     previousTime = currentTime;  //zapisuje bierzacy czas do zmiennej prev..
     digitalWrite(przekaznik, HIGH);
-    commentsMainProgram(3);
+    if(blokadaD){
+      commentsMainProgram(3);/*********************V1.2********************/
+      blokadaD=0;
+    }
     resetCharCounter = 0;
 
     if ( millis() - previousTime >= nastawaCzasu) {  //sprawdzam czy uplynela okreslona ilosc czasu
