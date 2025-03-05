@@ -172,7 +172,7 @@ void setup() {
   pinMode(przekaznik, OUTPUT);
 
   /****Port szeregowy****/
-  Serial.begin(115200);
+  //Serial.begin(115200);
   Wire.begin();
 
   /****LCD****/
@@ -201,9 +201,9 @@ void loop() {
   
   keySignPcf();  //klawiatura
   if(klawisz!=' '){
-    Serial.print(keyNumber);
-    Serial.print("   ");
-    Serial.println(klawisz);  
+    //Serial.print(keyNumber);
+    //Serial.print("   ");
+    //Serial.println(klawisz);  
   }
 
 
@@ -409,7 +409,7 @@ void commentsLoopProgram(int16_t type) {
   }
 }
 void optionsMenu() {
-  Serial.println("jestem w opcjach");
+  //Serial.println("jestem w opcjach");
   switch (stepCounter_1) {
     case 1:
       tft.fillScreen(ST77XX_WHITE);  // Fill screen with white
@@ -508,8 +508,8 @@ void resetFunct() {
     tft.fillScreen(ST77XX_WHITE);  // Fill screen with white
   }
   resetCharCounter++;
-  //  Serial.println("resetCharCounter: ");
-  //  Serial.println(resetCharCounter);
+  //  //Serial.println("resetCharCounter: ");
+  //  //Serial.println(resetCharCounter);
   delay(200);
 }
 void pedalTimeProgram() {
